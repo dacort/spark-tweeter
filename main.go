@@ -103,12 +103,15 @@ type SparkApp struct {
 }
 
 func parseSparkApp(body []byte) (*SparkApp, error) {
-	var s = new(SparkApp)
-	err := json.Unmarshal(body, &s)
+	var apps []SparkApp
+	err := json.Unmarshal(body, &apps)
 	if err != nil {
 		fmt.Println("whoops:", err)
+		return nil, err
 	}
-	return s, err
+
+	// We only ever have one app
+	return &apps[0], err
 }
 
 func getSparkApp() (*SparkApp, error) {
@@ -154,7 +157,7 @@ func main() {
 		tweeterChannel <- fmt.Sprintf("A new Spark app has been created! 💁‍♂️ %s", appInfo.Name)
 	}
 
-	t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
+	t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stderr"), tail.Config{Follow: true, ReOpen: true})
 	if err != nil {
 		log.Fatalln("Couldn't tail file", err)
 	}
