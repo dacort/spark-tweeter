@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
+	"github.com/nxadm/tail"
 )
 
 // Credentials stores all of our access/consumer tokens
@@ -74,5 +76,10 @@ func main() {
 	}
 	// log.Printf("%+v\n", resp)
 	// log.Printf("%+v\n", tweet)
-
+	files, _ := filepath.Glob("/var/log/spark/user/spark*driver")
+	fmt.Println(files[0])
+	t, err := tail.TailFile(filepath.Join(files[0], "stdout"), tail.Config{Follow: true, ReOpen: true})
+	for line := range t.Lines {
+		fmt.Println(line.Text)
+	}
 }
