@@ -2,14 +2,18 @@ package main
 
 import (
 	// other imports
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
+	"github.com/nxadm/tail"
 )
 
 // Credentials stores all of our access/consumer tokens
@@ -53,8 +57,7 @@ func getClient(creds *Credentials) (*twitter.Client, error) {
 	return client, nil
 }
 
-func main() {
-	fmt.Println("Go-Twitter Bot v0.01")
+func getTwitterClient() *twitter.Client {
 	creds := Credentials{
 		AccessToken:       os.Getenv("ACCESS_TOKEN"),
 		AccessTokenSecret: os.Getenv("ACCESS_TOKEN_SECRET"),
@@ -62,31 +65,100 @@ func main() {
 		ConsumerSecret:    os.Getenv("CONSUMER_SECRET"),
 	}
 
-	// fmt.Printf("%+v\n", creds)
-
 	client, err := getClient(&creds)
 	if err != nil {
 		log.Println("Error getting Twitter Client")
-		log.Println(err)
+		log.Fatalln(err)
 	}
 
-	_, _, err = client.Statuses.Update("Here we go!", nil)
+	return client
+}
+
+func tweeter() chan string {
+	client := getTwitterClient()
+	tweetText := make(chan string)
+
+	go func() {
+		for {
+			tweet := <-tweetText
+
+			_, _, err := client.Statuses.Update(tweet, nil)
+			if err != nil {
+				log.Println(err)
+			}
+		}
+	}()
+
+	return tweetText
+}
+
+type SparkAttempt struct {
+	SparkUser string `json:"sparkUser"`
+	StartTime string `json:"startTime"`
+}
+type SparkApp struct {
+	Id       string         `json:"id"`
+	Name     string         `json:"name"`
+	Attempts []SparkAttempt `json:"attempts":`
+}
+
+func parseSparkApp(body []byte) (*SparkApp, error) {
+	var s = new(SparkApp)
+	err := json.Unmarshal(body, &s)
 	if err != nil {
-		log.Println(err)
+		fmt.Println("whoops:", err)
 	}
-	// log.Printf("%+v\n", resp)
-	// log.Printf("%+v\n", tweet)
+	return s, err
+}
+
+func getSparkApp() (*SparkApp, error) {
+	resp, err := http.Get("http://localhost:4040/api/v1/applications")
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	s, err := parseSparkApp(body)
+	return s, err
+}
+
+func main() {
+	fmt.Println("Go-Twitter Bot v0.01")
+
+	tweeterChannel := tweeter()
+
+	fmt.Println("Waiting for log files to show up...")
+	var sparkDriverPath string
 	for {
 		files, _ := filepath.Glob("/var/log/spark/user/spark*driver")
 		if len(files) > 0 {
-			fmt.Println(files[0])
+			sparkDriverPath = files[0]
+			fmt.Println("Found our spark driver logs!", sparkDriverPath)
+
+			break
 		} else {
 			fmt.Println("No files found..")
 		}
 		time.Sleep(5 * time.Second)
 	}
-	// t, err := tail.TailFile(filepath.Join(files[0], "stdout"), tail.Config{Follow: true, ReOpen: true})
-	// for line := range t.Lines {
-	// 	fmt.Println(line.Text)
-	// }
+
+	// Now we get the spark app info
+	appInfo, err := getSparkApp()
+	if err != nil {
+		fmt.Println("Couldn't fetch Spark info")
+	} else {
+		tweeterChannel <- fmt.Sprintf("A new Spark app has been created! 💁‍♂️ %s", appInfo.Name)
+	}
+
+	t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
+	if err != nil {
+		log.Fatalln("Couldn't tail file", err)
+	}
+	for line := range t.Lines {
+		fmt.Println(line.Text)
+	}
 }
