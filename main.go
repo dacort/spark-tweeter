@@ -263,6 +263,9 @@ func sparkAPIMonitor(ctx context.Context, wg *sync.WaitGroup, tweeterChannel cha
 					if err != nil {
 						active, completed := countJobs(*sparkJobs)
 						tweeterChannel <- fmt.Sprintf("OK, one minute in and still chugging...\nJob status: %d active / %d completed", active, completed)
+						messageState = "UPDATE_1"
+					} else {
+						fmt.Println("Couldn't fetch Spark Jobs", err)
 					}
 				}
 			case <-ctx.Done():
