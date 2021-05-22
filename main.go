@@ -205,14 +205,20 @@ func waitForHeartbeatInit() error {
 }
 
 func waitForFlatline(cancel context.CancelFunc) {
+	/*
+	Wait for the EMR heartbeat file to stop updating. 
+	It should be noted that the file will actually disappear eventually, so we need to
+	keep track of the last heartbeat in a separate variable and can't rely on the os.Stat.
+	*/
+	lastHeartbeat := time.Now()
 	for range time.Tick(5 * time.Second) {
 		f, err := os.Stat(heatbeatFile())
 		if err == nil {
-			t1 := time.Now()
-			if t1.Sub(f.ModTime()).Seconds() > HEARTBEAT_TIMEOUT_SEC {
-				cancel()
-				break
-			}
+			lastHeartbeat = f.ModTime()
+		}
+		if time.Now().Sub(lastHeartbeat).Seconds() > HEARTBEAT_TIMEOUT_SEC {
+			cancel()
+			break
 		}
 	}
 }
