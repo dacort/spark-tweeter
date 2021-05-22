@@ -2,6 +2,7 @@ package main
 
 import (
 	// other imports
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -9,12 +10,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
 	"github.com/nxadm/tail"
 )
+
+const INITIAL_HEARTBEAT_TIMEOUT_SEC = 60 // We wait at least 60 seconds for the Spark driver to start
+const HEARTBEAT_TIMEOUT_SEC = 15         // We wait at least 15 seconds from the last heartbeat before shutting down
 
 // Credentials stores all of our access/consumer tokens
 // and secret keys needed for authentication against
@@ -78,13 +83,23 @@ func tweeter() chan string {
 	client := getTwitterClient()
 	tweetText := make(chan string)
 
+	// We keep track of tweetIDs here in order to create a thread
+	var tweetID int64
+
 	go func() {
 		for {
-			tweet := <-tweetText
+			statusText := <-tweetText
+			params := twitter.StatusUpdateParams{}
 
-			_, _, err := client.Statuses.Update(tweet, nil)
+			log.Println("Sending a tweet!", statusText)
+			if tweetID > 0 {
+				params.InReplyToStatusID = tweetID
+			}
+			tweet, _, err := client.Statuses.Update(statusText, &params)
 			if err != nil {
 				log.Println(err)
+			} else {
+				tweetID = tweet.ID
 			}
 		}
 	}()
@@ -99,7 +114,15 @@ type SparkAttempt struct {
 type SparkApp struct {
 	Id       string         `json:"id"`
 	Name     string         `json:"name"`
-	Attempts []SparkAttempt `json:"attempts":`
+	Attempts []SparkAttempt `json:"attempts"`
+}
+
+type SparkJob struct {
+	JobID             int    `json:"jobId"`
+	Status            string `json:"status"`
+	NumTasks          int    `json:"numTasks"`
+	NumActiveTasks    int    `json:"numActiveTasks"`
+	NumCompletedTasks int    `json:"numCompletedTasks"`
 }
 
 func parseSparkApp(body []byte) (*SparkApp, error) {
@@ -129,9 +152,141 @@ func getSparkApp() (*SparkApp, error) {
 	return s, err
 }
 
+func parseSparkJobs(body []byte) (*[]SparkJob, error) {
+	var jobs []SparkJob
+	err := json.Unmarshal(body, &jobs)
+	if err != nil {
+		fmt.Println("whoops:", err)
+		return nil, err
+	}
+
+	// We only ever have one app
+	return &jobs, err
+}
+
+func getSparkJobs(app_id string) (*[]SparkJob, error) {
+	jobsEndpoint := fmt.Sprintf("http://localhost:4040/api/v1/applications/%s/jobs", app_id)
+	resp, err := http.Get(jobsEndpoint)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	j, err := parseSparkJobs(body)
+	return j, err
+}
+
+/*
+	EMR stores a heartbeat file on a shared volume.
+	For more details see https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/pod-templates.html#pod-template-sidecar
+*/
+func heatbeatFile() string {
+	return filepath.Join(os.Getenv("EMR_COMMS_MOUNT"), "main-container-terminated")
+}
+
+func waitForHeartbeatInit() error {
+	log.Printf("Waiting %ds for EMR Spark heartbeat at '%s'\n", INITIAL_HEARTBEAT_TIMEOUT_SEC, heatbeatFile())
+	t1 := time.Now()
+	for range time.Tick(1 * time.Second) {
+		if _, err := os.Stat(heatbeatFile()); err == nil {
+			return nil
+		}
+		t2 := time.Now()
+		if t2.Sub(t1).Seconds() > INITIAL_HEARTBEAT_TIMEOUT_SEC {
+			return fmt.Errorf("Timeout while waiting for Spark heartbeat")
+		}
+	}
+
+	return nil
+}
+
+func waitForFlatline(cancel context.CancelFunc) {
+	for range time.Tick(5 * time.Second) {
+		f, err := os.Stat(heatbeatFile())
+		if err == nil {
+			t1 := time.Now()
+			if t1.Sub(f.ModTime()).Seconds() > HEARTBEAT_TIMEOUT_SEC {
+				cancel()
+				break
+			}
+		}
+	}
+}
+
+func countJobs(jobs []SparkJob) (active int, completed int) {
+	for _, j := range jobs {
+		active += j.NumActiveTasks
+		completed += j.NumCompletedTasks
+	}
+
+	return
+}
+
+func sparkAPIMonitor(ctx context.Context, wg *sync.WaitGroup, tweeterChannel chan string) {
+	// var sparkJobs []SparkJob
+	// var sparkApp SparkApp
+	var messageState = "NONE"
+
+	var startMessage = "Hey @dacort! A new Spark app is starting...! 💁‍♂️ %s\n\nID: %s"
+
+	go func() {
+		defer wg.Done()
+		startTime := time.Now()
+
+		// Try to populate the Spark app before we go ticking along
+		appInfo, err := getSparkApp()
+		if err == nil {
+			tweeterChannel <- fmt.Sprintf(startMessage, appInfo.Name, appInfo.Id)
+			messageState = "INIT"
+		}
+
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+
+				appInfo, err := getSparkApp()
+				if err != nil {
+					fmt.Println("Couldn't fetch Spark info")
+					continue
+				}
+				if messageState == "NONE" {
+					tweeterChannel <- fmt.Sprintf(startMessage, appInfo.Name, appInfo.Id)
+					messageState = "INIT"
+				} else if messageState == "INIT" && time.Now().Sub(startTime).Minutes() >= 1 {
+					sparkJobs, err := getSparkJobs(appInfo.Id)
+					if err != nil {
+						active, completed := countJobs(*sparkJobs)
+						tweeterChannel <- fmt.Sprintf("OK, one minute in and still chugging...\nJob status: %d active / %d completed", active, completed)
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
 func main() {
 	fmt.Println("Go-Twitter Bot v0.01")
 
+	// First, wait for the main-container-terminated file to show up
+	err := waitForHeartbeatInit()
+	if err != nil {
+		log.Fatalln(err.Error())
+	}
+
+	// Then, we start tweet channel
+	//       and a Spark API channel monitor
+	// 		 and a main-container-terminated channel
+
+	// Create a waitGroup
+	// Create a channel we can send tweet updates to
 	tweeterChannel := tweeter()
 
 	fmt.Println("Waiting for log files to show up...")
@@ -149,15 +304,19 @@ func main() {
 		time.Sleep(5 * time.Second)
 	}
 
-	// Now we get the spark app info
-	appInfo, err := getSparkApp()
-	if err != nil {
-		fmt.Println("Couldn't fetch Spark info")
-	} else {
-		tweeterChannel <- fmt.Sprintf("A new Spark app has been created! 💁‍♂️ %s", appInfo.Name)
-	}
+	// Set up cancellation context and waitgroup
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	wg := &sync.WaitGroup{}
 
-	t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stderr"), tail.Config{Follow: true, ReOpen: true})
+	sparkAPIMonitor(ctx, wg, tweeterChannel)
+	wg.Add(1)
+	// Then start a watcher for the heartbeat file, it can call cancelFunc
+	// Start a watcher for spark info and that'll tweet stuff out
+	// Start a watcher for stdout, and that'll be the last tweet
+	waitForFlatline(cancelFunc)
+	wg.Wait()
+
+	t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
 	if err != nil {
 		log.Fatalln("Couldn't tail file", err)
 	}
