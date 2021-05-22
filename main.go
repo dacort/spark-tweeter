@@ -15,7 +15,6 @@ import (
 
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
-	"github.com/nxadm/tail"
 )
 
 const INITIAL_HEARTBEAT_TIMEOUT_SEC = 60 // We wait at least 60 seconds for the Spark driver to start
@@ -206,9 +205,9 @@ func waitForHeartbeatInit() error {
 
 func waitForFlatline(cancel context.CancelFunc) {
 	/*
-	Wait for the EMR heartbeat file to stop updating. 
-	It should be noted that the file will actually disappear eventually, so we need to
-	keep track of the last heartbeat in a separate variable and can't rely on the os.Stat.
+		Wait for the EMR heartbeat file to stop updating.
+		It should be noted that the file will actually disappear eventually, so we need to
+		keep track of the last heartbeat in a separate variable and can't rely on the os.Stat.
 	*/
 	lastHeartbeat := time.Now()
 	for range time.Tick(5 * time.Second) {
@@ -328,11 +327,13 @@ func main() {
 	waitForFlatline(cancelFunc)
 	wg.Wait()
 
-	t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
-	if err != nil {
-		log.Fatalln("Couldn't tail file", err)
-	}
-	for line := range t.Lines {
-		fmt.Println(line.Text)
-	}
+	tweeterChannel <- "We're all done! 👋"
+
+	// t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
+	// if err != nil {
+	// 	log.Fatalln("Couldn't tail file", err)
+	// }
+	// for line := range t.Lines {
+	// 	fmt.Println(line.Text)
+	// }
 }
