@@ -24,8 +24,6 @@ func main() {
 	// 		 and a main-container-terminated channel
 
 	// Create a waitGroup
-	// Create a channel we can send tweet updates to
-	tweeterChannel := tweeter()
 
 	fmt.Println("Waiting for log files to show up...")
 	var sparkDriverPath string
@@ -45,16 +43,19 @@ func main() {
 	// Set up cancellation context and waitgroup
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	wg := &sync.WaitGroup{}
+	wg.Add(2)
+
+	// Create a channel we can send tweet updates to
+	tweeterChannel := tweetMonitor(ctx, wg)
 
 	sparkAPIMonitor(ctx, wg, tweeterChannel)
-	wg.Add(1)
 	// Then start a watcher for the heartbeat file, it can call cancelFunc
 	// Start a watcher for spark info and that'll tweet stuff out
 	// Start a watcher for stdout, and that'll be the last tweet
 	waitForFlatline(cancelFunc)
-	wg.Wait()
 
 	tweeterChannel <- "We're all done! 👋"
+	wg.Wait()
 
 	// t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
 	// if err != nil {

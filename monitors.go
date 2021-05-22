@@ -10,7 +10,7 @@ import (
 	"github.com/dghubble/go-twitter/twitter"
 )
 
-func tweeter() chan string {
+func tweetMonitor(ctx context.Context, wg *sync.WaitGroup) chan string {
 	client := getTwitterClient()
 	tweetText := make(chan string)
 
@@ -18,19 +18,24 @@ func tweeter() chan string {
 	var tweetID int64
 
 	go func() {
+		defer wg.Done()
 		for {
-			statusText := <-tweetText
-			params := twitter.StatusUpdateParams{}
+			select {
+			case statusText := <-tweetText:
+				params := twitter.StatusUpdateParams{}
 
-			log.Println("Sending a tweet!", statusText)
-			if tweetID > 0 {
-				params.InReplyToStatusID = tweetID
-			}
-			tweet, _, err := client.Statuses.Update(statusText, &params)
-			if err != nil {
-				log.Println(err)
-			} else {
-				tweetID = tweet.ID
+				log.Println("Sending a tweet!", statusText)
+				if tweetID > 0 {
+					params.InReplyToStatusID = tweetID
+				}
+				tweet, _, err := client.Statuses.Update(statusText, &params)
+				if err != nil {
+					log.Println(err)
+				} else {
+					tweetID = tweet.ID
+				}
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
@@ -61,7 +66,6 @@ func sparkAPIMonitor(ctx context.Context, wg *sync.WaitGroup, tweeterChannel cha
 		for {
 			select {
 			case <-t.C:
-				fmt.Println("SparkAPIMon checking in...", messageState)
 				appInfo, err := getSparkApp()
 				if err != nil {
 					fmt.Println("Couldn't fetch Spark info")
