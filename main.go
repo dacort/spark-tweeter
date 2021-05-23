@@ -5,39 +5,17 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"path/filepath"
 	"sync"
-	"time"
 )
 
 func main() {
 	fmt.Println("Go-Twitter Bot v0.01")
 
-	// First, wait for the main-container-terminated file to show up
+	// First, wait for the main-container-terminated file to show up.
+	// We exist if that doesn't happen in time.
 	err := waitForHeartbeatInit()
 	if err != nil {
 		log.Fatalln(err.Error())
-	}
-
-	// Then, we start tweet channel
-	//       and a Spark API channel monitor
-	// 		 and a main-container-terminated channel
-
-	// Create a waitGroup
-
-	fmt.Println("Waiting for log files to show up...")
-	var sparkDriverPath string
-	for {
-		files, _ := filepath.Glob("/var/log/spark/user/spark*driver")
-		if len(files) > 0 {
-			sparkDriverPath = files[0]
-			fmt.Println("Found our spark driver logs!", sparkDriverPath)
-
-			break
-		} else {
-			fmt.Println("No files found..")
-		}
-		time.Sleep(5 * time.Second)
 	}
 
 	// Set up cancellation context and waitgroup
@@ -45,24 +23,18 @@ func main() {
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
-	// Create a channel we can send tweet updates to
+	// Create a channel we can send tweet updates to.
+	// This gets passed around to different routines, but we close it in the main thread.
 	tweeterChannel := tweetMonitor(ctx, wg)
 
+	// Keep an eye on our job progress and tweet some pithy comments about how slow it is.
 	sparkAPIMonitor(ctx, wg, tweeterChannel)
+
 	// Then start a watcher for the heartbeat file, it can call cancelFunc
-	// Start a watcher for spark info and that'll tweet stuff out
-	// Start a watcher for stdout, and that'll be the last tweet
 	waitForFlatline(cancelFunc)
 
+	// That's it, folks! send out a final tweet...close that channel and go home.
 	tweeterChannel <- "We're all done! 👋"
 	close(tweeterChannel)
 	wg.Wait()
-
-	// t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
-	// if err != nil {
-	// 	log.Fatalln("Couldn't tail file", err)
-	// }
-	// for line := range t.Lines {
-	// 	fmt.Println(line.Text)
-	// }
 }
