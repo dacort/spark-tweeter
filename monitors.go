@@ -10,6 +10,8 @@ import (
 	"github.com/dghubble/go-twitter/twitter"
 )
 
+// tweetMonitor creates a new Tweet thread and appends subsequent messages to the thread.
+// The creating caller is responsible for `close`ing the channel when done.
 func tweetMonitor(ctx context.Context, wg *sync.WaitGroup) chan string {
 	client := getTwitterClient()
 	tweetText := make(chan string)
@@ -38,6 +40,8 @@ func tweetMonitor(ctx context.Context, wg *sync.WaitGroup) chan string {
 	return tweetText
 }
 
+// sparkAPIMonitor keeps an eye on the Spark endpoint and sends possibly pithy
+// messages to the provided tweeterChannel.
 func sparkAPIMonitor(ctx context.Context, wg *sync.WaitGroup, tweeterChannel chan string) {
 	// var sparkJobs []SparkJob
 	// var sparkApp SparkApp
