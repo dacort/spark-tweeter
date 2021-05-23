@@ -19,23 +19,18 @@ func tweetMonitor(ctx context.Context, wg *sync.WaitGroup) chan string {
 
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case statusText := <-tweetText:
-				params := twitter.StatusUpdateParams{}
+		for statusText := range tweetText {
+			params := twitter.StatusUpdateParams{}
 
-				log.Println("Sending a tweet!", statusText)
-				if tweetID > 0 {
-					params.InReplyToStatusID = tweetID
-				}
-				tweet, _, err := client.Statuses.Update(statusText, &params)
-				if err != nil {
-					log.Println(err)
-				} else {
-					tweetID = tweet.ID
-				}
-			case <-ctx.Done():
-				return
+			log.Println("Sending a tweet!", statusText)
+			if tweetID > 0 {
+				params.InReplyToStatusID = tweetID
+			}
+			tweet, _, err := client.Statuses.Update(statusText, &params)
+			if err != nil {
+				log.Println(err)
+			} else {
+				tweetID = tweet.ID
 			}
 		}
 	}()
@@ -51,7 +46,7 @@ func sparkAPIMonitor(ctx context.Context, wg *sync.WaitGroup, tweeterChannel cha
 	var startMessage = "Hey @dacort! A new Spark app is starting...! 💁‍♂️ %s\n\nID: %s"
 
 	go func() {
-		defer wg.Done()
+		// defer wg.Done()
 		startTime := time.Now()
 
 		// Try to populate the Spark app before we go ticking along

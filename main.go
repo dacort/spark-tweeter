@@ -43,7 +43,7 @@ func main() {
 	// Set up cancellation context and waitgroup
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	wg := &sync.WaitGroup{}
-	wg.Add(2)
+	wg.Add(1)
 
 	// Create a channel we can send tweet updates to
 	tweeterChannel := tweetMonitor(ctx, wg)
@@ -55,6 +55,7 @@ func main() {
 	waitForFlatline(cancelFunc)
 
 	tweeterChannel <- "We're all done! 👋"
+	close(tweeterChannel)
 	wg.Wait()
 
 	// t, err := tail.TailFile(filepath.Join(sparkDriverPath, "stdout"), tail.Config{Follow: true, ReOpen: true})
