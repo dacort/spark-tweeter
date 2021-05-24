@@ -12,7 +12,7 @@ func main() {
 	fmt.Println("Go-Twitter Bot v0.01")
 
 	// First, wait for the main-container-terminated file to show up.
-	// We exist if that doesn't happen in time.
+	// We exit if that doesn't happen in time.
 	err := waitForHeartbeatInit()
 	if err != nil {
 		log.Fatalln(err.Error())
