@@ -74,14 +74,11 @@ func sparkAPIMonitor(ctx context.Context, wg *sync.WaitGroup, tweeterChannel cha
 					tweeterChannel <- fmt.Sprintf(startMessage, appInfo.Name, appInfo.Id)
 					messageState = "INIT"
 				} else if messageState == "INIT" && time.Now().Sub(startTime).Minutes() >= 1 {
-					fmt.Println("Trying to get Spark jobs")
 					sparkJobs, err := getSparkJobs(appInfo.Id)
-					fmt.Println(sparkJobs)
 					if err != nil {
 						fmt.Println("Couldn't fetch Spark Jobs", err)
 					} else {
 						active, completed := countJobs(*sparkJobs)
-						fmt.Println(active, completed)
 						tweeterChannel <- fmt.Sprintf("OK, one minute in and still chugging...\nJob status: %d active / %d completed", active, completed)
 						messageState = "UPDATE_1"
 					}
